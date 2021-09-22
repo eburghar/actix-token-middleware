@@ -1,0 +1,17 @@
+[package]
+name = "actix-token-middleware"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+actix-web = { version = "3", default-features = false, features = ["rustls"] }
+actix-service = "1"
+futures = "0.3"
+jsonwebkey = { version = "0.3.4", features = ["jwt-convert"] }
+jsonwebtoken = "7.2.0"
+serde = "1.0.130"
+serde_json = "1.0.68"
+thiserror = "1.0.29"
+
+[dev-dependencies]
+actix-rt = "1"
