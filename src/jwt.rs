@@ -43,6 +43,7 @@ pub enum Error {
 }
 
 #[derive(Clone)]
+/// New type over a map between claims names and expected values
 pub struct Claims(BTreeMap<String, String>);
 
 impl Deref for Claims {
@@ -54,10 +55,12 @@ impl Deref for Claims {
 }
 
 impl Claims {
+    /// Encapsulate the given map inside the new type
 	pub fn new(map: BTreeMap<String, String>) -> Self {
 		Self(map)
 	}
 
+	/// Check that all claims are in tokendata and match expected data
 	pub fn check(&self, tokendata: &jwt::TokenData<Value>) -> Result<()> {
 		for valid in self.0.iter().map(|(key, val)| {
 			tokendata
@@ -70,12 +73,14 @@ impl Claims {
 					})
 				})
 		}) {
+    		// propagate errors if any
 			let _ = valid?;
 		}
 		Ok(())
 	}
 }
 
+/// Try to parse a json dictionnary and return a claims map
 impl TryFrom<&str> for Claims {
 	type Error = Error;
 
@@ -87,7 +92,7 @@ impl TryFrom<&str> for Claims {
 }
 
 impl Jwks {
-	/// Initialize a Jwks from a url
+	/// Initialize a Jwks from a given url
 	pub async fn get(url: &str) -> Result<Self> {
 		let client = Client::default();
 		let mut response = client
@@ -108,7 +113,7 @@ impl Jwks {
 			.find(|k| k.key_id.as_ref().filter(|id| *id == kid).is_some())
 	}
 
-	/// check the jwt
+	/// Check the jwt (expiration, signature, ...)
 	pub fn check_jwt(&self, jwt: &str) -> Result<jwt::TokenData<Value>> {
 		let header = jwt::decode_header(&jwt).map_err(|e| Error::JwtHeaderError(e))?;
 		let kid = header.kid.ok_or_else(|| Error::NoKid)?;
@@ -126,7 +131,7 @@ impl Jwks {
 			.map_err(|e| Error::JwtError(e))
 	}
 
-	/// ensure that all claims are present in the token with correct values
+	/// Ensure that all claims are present in the token with expected values
 	pub fn validate_jwt(&self, jwt: &str, claims: &BTreeMap<String, String>) -> Result<()> {
 		let tokendata = self.check_jwt(jwt)?;
 		for valid in claims.iter().map(|(key, val)| {

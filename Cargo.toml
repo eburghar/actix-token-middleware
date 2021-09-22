@@ -1,5 +1,6 @@
 [package]
 name = "actix-token-middleware"
+description = "token middleware for protecting url under actix-web"
 version = "0.1.0"
 edition = "2018"
 
