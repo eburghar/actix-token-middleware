@@ -33,7 +33,7 @@ async fn serve() -> Result<()> {
     	App::new()
     		.data(jwks.clone())
     		.data(claims.clone())
-    		.servive(protected);
+    		.service(protected);
 	server.await?;
 	Ok(())
 ```
