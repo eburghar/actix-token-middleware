@@ -13,30 +13,25 @@ a more secure mechanism (asymmetrical cryptography). You can protect urls by tru
 from a job from a given project, namespace, protected branch or tag, ...
 
 ```rust
-use actix_token_middleware::{
-	jwt::{Claims, Jwks},
-	jwtauth::JwtAuth,
-};
+use actix_token_middleware::{data::Jwt, middleware::jwtauth::JwtAuth};
 use actix_web::{get, HttpResponse, HttpServer};
 
-/// wrap protected in JwtAuth middleware
-#[get("/protected", wrap = "JwtAuth")]
 async fn protected() -> HttpResponse {
 	HttpResponse::Ok().body("protected url granted !")
 }
 
 async fn serve() -> Result<()> {
-    // get jwks
-    let jwks = Jwks::get("https://gitlab.com/-/jwks").await.unwrap();
-    // create claims map from a json string
-    let claims = Claims::try_from("{ \"iss\": \"example.com\" }");
-    // turn jwks and claims accessible to extractors
+    // Structure to drive the JwtAuthMiddleware instanciated by JwtAuth factory (can be deserialized with serde)
+    let jwt = Jwt::new("https://gitlab.com/-/jwks", vec![("iss", "example.com"]).await.unwrap();
     let server = HttpServer::new(move || {
-    	App::new()
-    		.data(jwks.clone())
-    		.data(claims.clone())
-    		.service(protected);
+        App::new()
+            .service(
+                web::resource("/protected")
+                    .wrap(JwtAuth::new(jwt))
+                    .route(web::post().to(upload)),
+            );
     // serve
-	server.await?;
-	Ok(())
+    server.await?;
+    Ok(())
+}
 ```

@@ -1,42 +1,33 @@
+use crate::data::Jwt;
+
 use actix_service::{Service, Transform};
 use actix_web::{
 	dev::{ServiceRequest, ServiceResponse},
 	error::ErrorUnauthorized,
-	web::Data,
+	http::header::AUTHORIZATION,
 	Error,
 };
 use futures::future::{err, ok, Either, Ready};
 use std::{
-	ops::Deref,
+	rc::Rc,
 	task::{Context, Poll},
 };
 
-// There are two steps in middleware processing.
-// 1. Middleware initialization, middleware factory gets called with
-//    next service in chain as parameter.
-// 2. Middleware's call method gets called with normal request.
-pub struct TokenAuth;
+#[derive(Clone)]
+/// Middleware factory than instanciate JwtAuthMiddleware
+pub struct JwtAuth(Rc<Jwt>);
 
-pub struct Token(String);
-
-impl Token {
-	pub fn new(token: &str) -> Self {
-		Self(token.to_owned())
+impl JwtAuth {
+	/// Construct a JwtAuth instance that forwards a Jwt struct to all its middleware
+	pub fn new(jwt: Jwt) -> Self {
+		Self(Rc::new(jwt))
 	}
-}
-
-impl Deref for Token {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
 }
 
 // Middleware factory is `Transform` trait from actix-service crate
 // `S` - type of the next service
 // `B` - type of response's body
-impl<S, B> Transform<S> for TokenAuth
+impl<S, B> Transform<S> for JwtAuth
 where
 	S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
 	S::Future: 'static,
@@ -46,19 +37,20 @@ where
 	type Response = ServiceResponse<B>;
 	type Error = Error;
 	type InitError = ();
-	type Transform = TokenAuthMiddleware<S>;
+	type Transform = JwtAuthMiddleware<S>;
 	type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
 	fn new_transform(&self, service: S) -> Self::Future {
-		ok(TokenAuthMiddleware { service })
+		ok(JwtAuthMiddleware { service, jwt: self.0.clone() })
 	}
 }
 
-pub struct TokenAuthMiddleware<S> {
+pub struct JwtAuthMiddleware<S> {
 	service: S,
+	jwt: Rc<Jwt>
 }
 
-impl<S, B> Service for TokenAuthMiddleware<S>
+impl<S, B> Service for JwtAuthMiddleware<S>
 where
 	S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
 	S::Future: 'static,
@@ -73,17 +65,21 @@ where
 	}
 
 	fn call(&mut self, req: ServiceRequest) -> Self::Future {
-		if let Some(reqtok) = req
+		if let Some(jwt) = req
 			.headers()
-			.get("token")
+			.get(AUTHORIZATION)
 			.and_then(|token| token.to_str().ok())
+			.and_then(|token| token.find("Bearer ").and_then(|_| Some(&token[7..])))
 		{
-			if let Some(tok) = req.app_data::<Data<Token>>() {
-				if reqtok == tok.0 {
-					return Either::Left(self.service.call(req));
-				}
-			}
+			return self.jwt
+				.validate_jwt(jwt)
+				.map(|_| Either::Left(self.service.call(req)))
+				.unwrap_or_else(|e| {
+					Either::Right(err(ErrorUnauthorized(format!("Not authorized - {}", e))))
+				});
 		}
-		Either::Right(err(ErrorUnauthorized("not authorized")))
+		Either::Right(err(ErrorUnauthorized(
+			"Not authorized - Missing bearer token",
+		)))
 	}
 }
