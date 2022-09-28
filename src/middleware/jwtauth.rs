@@ -1,17 +1,13 @@
 use crate::data::Jwt;
 
-use actix_service::{Service, Transform};
+use actix_utils::future::{err, ok, Either, Ready};
 use actix_web::{
-	dev::{ServiceRequest, ServiceResponse},
+	dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
 	error::ErrorUnauthorized,
 	http::header::AUTHORIZATION,
 	Error,
 };
-use futures::future::{err, ok, Either, Ready};
-use std::{
-	rc::Rc,
-	task::{Context, Poll},
-};
+use std::rc::Rc;
 
 #[derive(Clone)]
 /// Middleware factory than instanciate JwtAuthMiddleware
@@ -27,59 +23,59 @@ impl JwtAuth {
 // Middleware factory is `Transform` trait from actix-service crate
 // `S` - type of the next service
 // `B` - type of response's body
-impl<S, B> Transform<S> for JwtAuth
+impl<S, B> Transform<S, ServiceRequest> for JwtAuth
 where
-	S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+	S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
 	S::Future: 'static,
 	B: 'static,
 {
-	type Request = ServiceRequest;
 	type Response = ServiceResponse<B>;
 	type Error = Error;
-	type InitError = ();
 	type Transform = JwtAuthMiddleware<S>;
+	type InitError = ();
 	type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
 	fn new_transform(&self, service: S) -> Self::Future {
-		ok(JwtAuthMiddleware { service, jwt: self.0.clone() })
+		ok(JwtAuthMiddleware {
+			service,
+			jwt: self.0.clone(),
+		})
 	}
 }
 
 pub struct JwtAuthMiddleware<S> {
 	service: S,
-	jwt: Rc<Jwt>
+	jwt: Rc<Jwt>,
 }
 
-impl<S, B> Service for JwtAuthMiddleware<S>
+impl<S, B> Service<ServiceRequest> for JwtAuthMiddleware<S>
 where
-	S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+	S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
 	S::Future: 'static,
 {
-	type Request = ServiceRequest;
 	type Response = ServiceResponse<B>;
 	type Error = Error;
 	type Future = Either<S::Future, Ready<Result<Self::Response, Self::Error>>>;
 
-	fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-		self.service.poll_ready(cx)
-	}
+	forward_ready!(service);
 
-	fn call(&mut self, req: ServiceRequest) -> Self::Future {
+	fn call(&self, req: ServiceRequest) -> Self::Future {
 		if let Some(jwt) = req
 			.headers()
 			.get(AUTHORIZATION)
 			.and_then(|token| token.to_str().ok())
-			.and_then(|token| token.find("Bearer ").and_then(|_| Some(&token[7..])))
+			.and_then(|token| token.find("Bearer: ").map(|_| &token[8..]))
 		{
-			return self.jwt
+			self.jwt
 				.validate_jwt(jwt)
-				.map(|_| Either::Left(self.service.call(req)))
+				.map(|_| Either::left(self.service.call(req)))
 				.unwrap_or_else(|e| {
-					Either::Right(err(ErrorUnauthorized(format!("Not authorized - {}", e))))
-				});
+					Either::right(err(ErrorUnauthorized(format!("Not authorized - {}", e))))
+				})
+		} else {
+			Either::right(err(ErrorUnauthorized(
+				"Not authorized - Missing bearer token",
+			)))
 		}
-		Either::Right(err(ErrorUnauthorized(
-			"Not authorized - Missing bearer token",
-		)))
 	}
 }

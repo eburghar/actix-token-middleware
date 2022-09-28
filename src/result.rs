@@ -1,12 +1,12 @@
-use actix_web::client::SendRequestError;
-use std::str::Utf8Error;
+use awc::error::SendRequestError;
 use jsonwebtoken as jwt;
+use std::str::Utf8Error;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-	#[error("Failed to get JKWS from endpoint")]
+	#[error("Failed to get JKWS from endpoint: {0}")]
 	GetError(#[source] SendRequestError),
 	#[error("Failed to get JKWS response body")]
 	BodyResponse,

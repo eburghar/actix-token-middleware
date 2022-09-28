@@ -1,13 +1,12 @@
-use actix_service::{Service, Transform};
+use actix_utils::future::{ready, Ready};
 use actix_web::{
-	dev::{ServiceRequest, ServiceResponse},
+	dev::{ServiceRequest, ServiceResponse, Service, Transform, forward_ready},
 	error::ErrorUnauthorized,
 	Error,
 };
-use futures::future::{err, ok, Either, Ready};
+use actix_utils::future::{err, Either};
 use std::{
-	rc::Rc,
-	task::{Context, Poll},
+	rc::Rc
 };
 
 // There are two steps in middleware processing.
@@ -15,14 +14,14 @@ use std::{
 //    next service in chain as parameter.
 // 2. Middleware's call method gets called with normal request.
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct TokenAuth(Rc<String>);
 
-impl Default for TokenAuth {
+/*impl Default for TokenAuth {
 	fn default() -> Self {
 		Self(Rc::new(String::default()))
 	}
-}
+}*/
 
 impl TokenAuth {
 	/// Construct `TokenAuth` middleware.
@@ -34,24 +33,23 @@ impl TokenAuth {
 // Middleware factory is `Transform` trait from actix-service crate
 // `S` - type of the next service
 // `B` - type of response's body
-impl<S, B> Transform<S> for TokenAuth
+impl<S, B> Transform<S, ServiceRequest> for TokenAuth
 where
-	S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+	S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
 	S::Future: 'static,
 	B: 'static,
 {
-	type Request = ServiceRequest;
 	type Response = ServiceResponse<B>;
 	type Error = Error;
-	type InitError = ();
 	type Transform = TokenAuthMiddleware<S>;
+	type InitError = ();
 	type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
 	fn new_transform(&self, service: S) -> Self::Future {
-		ok(TokenAuthMiddleware {
+		ready(Ok(TokenAuthMiddleware {
 			service,
 			token: self.0.clone(),
-		})
+		}))
 	}
 }
 
@@ -60,30 +58,27 @@ pub struct TokenAuthMiddleware<S> {
 	token: Rc<String>,
 }
 
-impl<S, B> Service for TokenAuthMiddleware<S>
+impl<S, B> Service<ServiceRequest> for TokenAuthMiddleware<S>
 where
-	S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+	S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
 	S::Future: 'static,
 {
-	type Request = ServiceRequest;
 	type Response = ServiceResponse<B>;
 	type Error = Error;
 	type Future = Either<S::Future, Ready<Result<Self::Response, Self::Error>>>;
 
-	fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-		self.service.poll_ready(cx)
-	}
+	forward_ready!(service);
 
-	fn call(&mut self, req: ServiceRequest) -> Self::Future {
+	fn call(&self, req: ServiceRequest) -> Self::Future {
 		if let Some(token) = req
 			.headers()
 			.get("token")
 			.and_then(|token| token.to_str().ok())
 		{
 			if token == *self.token {
-				return Either::Left(self.service.call(req));
+				return Either::left(self.service.call(req));
 			}
 		}
-		Either::Right(err(ErrorUnauthorized("not authorized")))
+		Either::right(err(ErrorUnauthorized("not authorized")))
 	}
 }

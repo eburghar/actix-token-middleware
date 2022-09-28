@@ -1,11 +1,11 @@
 use crate::result::{Error, Result};
 
-use actix_web::client::Client;
-use serde_vecmap::vecmap;
+use awc::Client;
 use jsonwebkey as jwk;
 use jsonwebtoken as jwt;
 use serde::Deserialize;
 use serde_json::Value;
+use serde_vecmap::vecmap;
 use std::str::from_utf8;
 
 #[derive(Deserialize, Clone, Default)]
@@ -65,20 +65,14 @@ impl Jwt {
 
 	/// Check the jwt (expiration, signature, ...)
 	pub fn check_jwt(&self, jwt: &str) -> Result<jwt::TokenData<Value>> {
-		let header = jwt::decode_header(&jwt).map_err(|e| Error::JwtHeaderError(e))?;
-		let kid = header.kid.ok_or_else(|| Error::NoKid)?;
+		let header = jwt::decode_header(jwt).map_err(Error::JwtHeaderError)?;
+		let kid = header.kid.ok_or(Error::NoKid)?;
 		let key = self
 			.get_key(&kid)
 			.ok_or_else(|| Error::KeyNotFound(kid.to_owned()))?;
 		// prefer the key alg to the jwt alg
-		let alg: jwt::Algorithm = key.algorithm.unwrap().into();
-		let validation = jwt::Validation {
-			// validate_exp: false,
-			algorithms: vec![alg],
-			..Default::default()
-		};
-		jwt::decode::<Value>(&jwt, &key.key.to_decoding_key(), &validation)
-			.map_err(|e| Error::JwtError(e))
+		let validation = jwt::Validation::new(key.algorithm.unwrap().into());
+		jwt::decode::<Value>(jwt, &key.key.to_decoding_key(), &validation).map_err(Error::JwtError)
 	}
 
 	/// Ensure that all claims are present in the token with expected values
@@ -111,15 +105,11 @@ impl Jwks {
 	/// Initialize a Jwks from a given url
 	async fn get(url: &str) -> Result<Self> {
 		let client = Client::default();
-		let mut response = client
-			.get(url)
-			.send()
-			.await
-			.map_err(|e| Error::GetError(e))?;
+		let mut response = client.get(url).send().await.map_err(Error::GetError)?;
 		let body = response.body().await.map_err(|_| Error::BodyResponse)?;
 		from_utf8(&body)
-			.map_err(|e| Error::DecodeError(e))
-			.and_then(|s| serde_json::from_str::<Jwks>(s).map_err(|e| Error::DeserError(e)))
+			.map_err(Error::DecodeError)
+			.and_then(|s| serde_json::from_str::<Jwks>(s).map_err(Error::DeserError))
 	}
 }
 
